@@ -40,7 +40,7 @@ sys.exit(namespace['ENTRYPOINT']())
 NOAD_RESTORE_PYTHON
 '''.replace('PAYLOAD', payload).replace('SOURCE_SHA', sha)
 notices = (root / 'LICENSE').read_text(encoding='utf-8') + '\n' + (root / 'NOTICE').read_text(encoding='utf-8')
-shell = shell.replace('# SPDX-License-Identifier: MIT', '# SPDX-License-Identifier: MIT\n' + '\n'.join('# ' + line for line in notices.splitlines()))
+shell = shell.replace('# SPDX-License-Identifier: MIT', '# SPDX-License-Identifier: MIT\n' + '\n'.join(('# ' + line).rstrip() for line in notices.splitlines()))
 out = root / 'build' / 'release'
 out.mkdir(parents=True, exist_ok=True)
 checksums = []
