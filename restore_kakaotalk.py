@@ -576,7 +576,8 @@ def discover_backup(app):
     if not root.exists():
         return None
     with PathGuard() as guard:
-        guard.directory(root, private=True)
+        # 이전 배포본의 공용 보관 폴더는 755일 수 있습니다. 개별 백업은 별도로 700을 검사합니다.
+        guard.directory(root)
         found = []
         for entry in sorted(root.iterdir()):
             safe_path(entry)
