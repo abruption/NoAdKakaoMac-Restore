@@ -16,6 +16,7 @@ from pathlib import Path
 import platform
 import plistlib
 import pwd
+import re
 import shutil
 import stat
 import subprocess
@@ -871,6 +872,84 @@ class Restorer:
         self._check_overlap()
 
 
+def _diagnostic_version(value):
+    # 앱·기록이 임의 문자열을 담더라도 제보 결과에 그대로 옮기지 않습니다.
+    return value if isinstance(value, str) and re.fullmatch(r'[0-9]+(?:\.[0-9]+)*(?:-rc\.[0-9]+)?', value[:48]) and len(value) <= 48 else None
+
+
+def _diagnostic_path(path):
+    try:
+        info = path.lstat()
+        return {'exists': True, 'symlink': stat.S_ISLNK(info.st_mode),
+                'mode': format(stat.S_IMODE(info.st_mode), '04o'),
+                'readable': os.access(path, os.R_OK), 'writable': os.access(path, os.W_OK),
+                'owned_by_current_user': info.st_uid == os.geteuid()}
+    except FileNotFoundError:
+        return {'exists': False}
+    except OSError as error:
+        return {'accessible': False, 'errno': error.errno}
+
+
+def _diagnose(app, backup_dir=None):
+    """공유할 값만 골라 경로와 외부 명령의 원문을 출력하지 않습니다."""
+    report = {'schema': 1, 'tool_version': VERSION,
+              'environment': {'macos': _diagnostic_version(platform.mac_ver()[0]),
+                              'architecture': platform.machine() if platform.machine() in ('arm64', 'x86_64') else 'other',
+                              'python': '.'.join(str(item) for item in sys.version_info[:3]),
+                              'administrator': os.geteuid() == 0},
+              'options': {'custom_app': str(app) != '/Applications/KakaoTalk.app',
+                          'explicit_backup': backup_dir is not None}}
+    tool = None
+    try:
+        require_host()
+        tool = Restorer(app, backup_dir)
+        result = tool.status()
+        report['status'] = {'state': result['state']}
+    except (RestoreError, OSError) as error:
+        report['status'] = {'state': 'ERROR', 'code': getattr(error, 'code', 'IO_ERROR')}
+        if isinstance(error, OSError):
+            report['status']['errno'] = error.errno
+    if tool is not None:
+        report['app'] = _diagnostic_path(tool.app)
+        try:
+            info = app_info(tool.app)
+            report['app']['version'] = _diagnostic_version(info['CFBundleShortVersionString'])
+            report['app']['build'] = _diagnostic_version(str(info['CFBundleVersion']))
+        except (RestoreError, OSError):
+            pass
+        report['artifacts'] = {name: _diagnostic_path(path) for name, path in
+                               [('lock', tool.lock), ('stage', tool.stage), ('previous', tool.previous),
+                                ('legacy_stage', tool.legacy[0]), ('legacy_previous', tool.legacy[1])]}
+        backup = tool.backup_dir
+        if backup is None:
+            try:
+                backup = discover_backup(tool.app)
+            except (RestoreError, OSError):
+                pass
+        report['backup_selected'] = backup is not None
+        if backup is not None:
+            report['backup'] = {name: _diagnostic_path(backup / name) for name in
+                                ('manifest.json', 'original.app', 'transaction.json', 'preparation.json',
+                                 'restore-only-transaction.json', 'restore-only-transaction.json.writing')}
+            try:
+                record = load_json(backup / 'manifest.json')
+                report['record'] = {'schema': 1 if type(record.get('schema')) is int and record['schema'] == 1 else 'other',
+                                    'state': record.get('state') if record.get('state') in ('ORIGINAL', 'PATCHED') else 'other',
+                                    'tool_version': _diagnostic_version(record.get('tool_version'))}
+            except (RestoreError, OSError):
+                pass
+    return report
+
+
+def diagnose(app, backup_dir=None):
+    try:
+        return _diagnose(app, backup_dir)
+    except Exception:
+        # 예상하지 못한 형식·파일 오류도 경로가 담긴 traceback으로 공개하지 않습니다.
+        return {'schema': 1, 'tool_version': VERSION,
+                'status': {'state': 'ERROR', 'code': 'UNEXPECTED_DIAGNOSTIC_ERROR'}}
+
+
 class KoreanParser(argparse.ArgumentParser):
     def format_usage(self):
         return super().format_usage().replace('usage:', '사용법:', 1)
@@ -883,16 +962,31 @@ class KoreanParser(argparse.ArgumentParser):
         self.exit(2, '오류: 명령 또는 옵션이 올바르지 않습니다. --help로 사용법을 확인하세요.\n')
 
 
+def diagnostic_main(argv=None):
+    parser = KoreanParser(add_help=False, description='복구 오류 제보용 읽기 전용 진단입니다. 앱과 백업을 변경하지 않으며 경로·원시 오류는 출력하지 않습니다.')
+    parser._optionals.title = '옵션'
+    parser.add_argument('-h', '--help', action='help', help='사용법 표시 후 종료')
+    parser.add_argument('--app', default='/Applications/KakaoTalk.app', help='카카오톡 앱 경로')
+    parser.add_argument('--backup-dir', help='manifest.json과 original.app이 있는 백업 폴더')
+    parser.add_argument('--version', action='version', version=VERSION, help='도구 버전 표시 후 종료')
+    args = parser.parse_args(argv)
+    print(json.dumps(diagnose(args.app, args.backup_dir), ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv=None):
     parser = KoreanParser(add_help=False, description='전체 원본 백업으로 카카오톡 공식 앱을 복원합니다. 버전 표는 사용하지 않습니다.')
     parser._positionals.title = '명령'
     parser._optionals.title = '옵션'
     parser.add_argument('-h', '--help', action='help', help='사용법 표시 후 종료')
-    parser.add_argument('command', choices=('status', 'restore'), nargs='?', default='status', help='상태 확인 또는 공식 원본 복원')
+    parser.add_argument('command', choices=('status', 'restore', 'diagnose'), nargs='?', default='status', help='상태 확인, 공식 원본 복원 또는 제보용 진단')
     parser.add_argument('--app', default='/Applications/KakaoTalk.app', help='카카오톡 앱 경로')
     parser.add_argument('--backup-dir', help='기존 manifest.json과 original.app이 있는 백업 폴더')
     parser.add_argument('--version', action='version', version=VERSION, help='도구 버전 표시 후 종료')
     args = parser.parse_args(argv)
+    if args.command == 'diagnose':
+        print(json.dumps(diagnose(args.app, args.backup_dir), ensure_ascii=False, indent=2))
+        return 0
     try:
         require_host()
         tool = Restorer(args.app, args.backup_dir)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""배포용 단일 복원 스크립트와 체크섬을 만듭니다."""
+"""배포용 복원·진단 스크립트와 체크섬을 만듭니다."""
+import argparse
 import ast
 import base64
 import gzip
@@ -7,6 +8,9 @@ import hashlib
 from pathlib import Path
 import textwrap
 
+parser = argparse.ArgumentParser(description='복원·진단 배포 파일을 생성합니다.')
+parser.add_argument('--update-diagnostic', action='store_true', help='저장소의 diagnose.sh도 갱신')
+args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 source = (root / 'restore_kakaotalk.py').read_bytes()
 ast.parse(source.decode(), feature_version=(3, 9))
@@ -29,15 +33,27 @@ if sys.version_info < (3, 9):
 source = gzip.decompress(base64.b64decode("""PAYLOAD""", validate=False))
 if hashlib.sha256(source).hexdigest() != 'SOURCE_SHA':
     sys.exit('내장 복원 코드의 무결성 검사에 실패했습니다.')
-sys.argv[0] = 'restore.sh'
-exec(compile(source, 'restore_kakaotalk.py', 'exec'), {'__name__': '__main__'})
+sys.argv[0] = 'SCRIPT_NAME'
+namespace = {'__name__': 'embedded_script'}
+exec(compile(source, 'restore_kakaotalk.py', 'exec'), namespace)
+sys.exit(namespace['ENTRYPOINT']())
 NOAD_RESTORE_PYTHON
 '''.replace('PAYLOAD', payload).replace('SOURCE_SHA', sha)
 notices = (root / 'LICENSE').read_text(encoding='utf-8') + '\n' + (root / 'NOTICE').read_text(encoding='utf-8')
 shell = shell.replace('# SPDX-License-Identifier: MIT', '# SPDX-License-Identifier: MIT\n' + '\n'.join('# ' + line for line in notices.splitlines()))
 out = root / 'build' / 'release'
 out.mkdir(parents=True, exist_ok=True)
-(out / 'restore.sh').write_bytes(shell.encode('utf-8'))
-(out / 'restore.sh').chmod(0o755)
-(out / 'SHA256SUMS').write_text(hashlib.sha256((out / 'restore.sh').read_bytes()).hexdigest() + '  restore.sh\n', encoding='utf-8')
-print('생성 완료: build/release/restore.sh, build/release/SHA256SUMS')
+checksums = []
+for name in ('restore.sh', 'diagnose.sh'):
+    entrypoint = 'diagnostic_main' if name == 'diagnose.sh' else 'main'
+    content = shell.replace('SCRIPT_NAME', name).replace('ENTRYPOINT', entrypoint)
+    if name == 'diagnose.sh':
+        content = content.replace('공식 전체 백업 복원 전용.', '읽기 전용 복구 진단.')
+    (out / name).write_bytes(content.encode('utf-8'))
+    (out / name).chmod(0o755)
+    checksums.append(hashlib.sha256((out / name).read_bytes()).hexdigest() + '  ' + name)
+(out / 'SHA256SUMS').write_text('\n'.join(checksums) + '\n', encoding='utf-8')
+# 진단만 실행하는 같은 파일을 소스에서도 제공합니다.
+if args.update_diagnostic:
+    (root / 'diagnose.sh').write_bytes((out / 'diagnose.sh').read_bytes())
+print('생성 완료: build/release/restore.sh, diagnose.sh, SHA256SUMS')

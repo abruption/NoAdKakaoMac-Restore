@@ -30,5 +30,8 @@ jobs:
           python3 scripts/build-release.py
           sh build/release/restore.sh --version
           sh build/release/restore.sh --help
+          sh build/release/diagnose.sh --help
+          sh build/release/diagnose.sh --version
+          python3 scripts/check-diagnostic.py
           cd build/release
           shasum -a 256 -c SHA256SUMS

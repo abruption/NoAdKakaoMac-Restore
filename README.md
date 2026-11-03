@@ -32,4 +32,6 @@ sh restore.sh restore
 
 원본 백업이 없다면 카카오톡을 공식 배포처에서 다시 설치하세요. 대화 자료나 사용자 데이터 폴더를 삭제하지 마세요.
 
+복구가 실패하면 [진단 방법](docs/사용법.md#복구-실패-진단)에 따라 `diagnose.sh` 결과를 준비하고 [오류 제보](https://github.com/abruption/NoAdKakaoMac-Restore/issues/new/choose)를 남겨 주세요.
+
 이 저장소에는 광고 제거 기능과 카카오톡 앱 파일이 포함되어 있지 않습니다. [MIT 라이선스](LICENSE) · [재사용 고지](NOTICE)
