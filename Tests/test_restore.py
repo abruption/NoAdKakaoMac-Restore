@@ -379,6 +379,18 @@ class RestoreTests(unittest.TestCase):
         self.assertEqual(result['status']['code'], 'UNEXPECTED_DIAGNOSTIC_ERROR')
         self.assertNotIn('private-secret', json.dumps(result))
 
+    def test_legacy_backup_root_can_be_readable_without_weakening_backup(self):
+        root = self.root / 'legacy-backups'
+        root.mkdir(mode=0o755)
+        self.backup.rename(root / 'record')
+        self.backup = root / 'record'
+        with patch.object(m, 'user_backup_root', return_value=root):
+            tool = m.Restorer(self.app)
+            self.assertEqual(tool.status()['state'], 'RESTORABLE')
+            self.backup.chmod(0o755)
+            with self.assertRaises(m.RestoreError):
+                m.Restorer(self.app).status()
+
     def test_sudo_backup_home_and_multiple_backups(self):
         fakehome = self.root / 'other-home'
         expected = fakehome / 'Library/Application Support/NoAdKakaoMac/backups'
