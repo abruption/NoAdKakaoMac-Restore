@@ -21,6 +21,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import uuid
 
 VERSION = '0.1.0-rc.1'
 BUNDLE_ID = 'com.kakao.KakaoTalkMac'
@@ -609,7 +610,8 @@ class Restorer:
         stem = '.' + self.app.name + '.noadkakaomac-' + key
         self.lock = self.app.parent / (stem + '.lock')
         self.stage = self.app.parent / (stem + '.restore-stage.app')
-        self.previous = self.app.parent / (stem + '.restore-previous.app')
+        self.previous_base = self.app.parent / (stem + '.restore-previous.app')
+        self.previous = self.previous_base
         self.legacy = [self.app.parent / (stem + suffix) for suffix in ('.stage.app', '.previous.app')]
         self.record = None
         self._lock_active = False
@@ -724,8 +726,8 @@ class Restorer:
                 except (RestoreError, OSError) as error:
                     raise RestoreError('준비 복사본이 불완전하거나 변경됐습니다. 파일을 보존했으며 자동 재시도할 수 없습니다. 오류 코드와 함께 문의하세요.', 'INCOMPLETE_PREPARATION') from error
             return {'state': 'RECOVERY_REQUIRED', 'message': '중단된 복원이 있습니다. restore 명령으로 이어서 복구하세요.'}
-        if self.stage.exists() or self.previous.exists():
-            raise RestoreError('기록에 연결되지 않은 복원 파일을 보존했습니다: ' + str(self.stage if self.stage.exists() else self.previous), 'UNKNOWN_ARTIFACT')
+        if self.stage.exists() or self.stage.is_symlink():
+            raise RestoreError('기록에 연결되지 않은 준비 파일을 보존했습니다: ' + str(self.stage), 'UNKNOWN_ARTIFACT')
         self._check_modified(self.app)
         return {'state': 'RESTORABLE', 'message': '기록과 공식 전체 백업을 확인했습니다. 복원할 수 있습니다.'}
 
@@ -767,6 +769,13 @@ class Restorer:
                 not isinstance(value.get('stage_identity'), dict) or
                 not isinstance(value.get('previous_identity'), dict)):
             raise RestoreError('복원 중단 기록이 이 백업과 다릅니다.', 'INVALID_JOURNAL')
+        previous_id = value.get('previous_id')
+        if 'previous_id' in value:
+            if not isinstance(previous_id, str) or re.fullmatch('[0-9a-f]{32}', previous_id) is None:
+                raise RestoreError('이전 앱 보존 경로 기록이 올바르지 않습니다.', 'INVALID_JOURNAL')
+            self.previous = self.previous_base.with_name(self.previous_base.stem + '-' + previous_id + '.app')
+        else:
+            self.previous = self.previous_base
         for key in ('stage_identity', 'previous_identity'):
             if (set(value[key]) != {'dev', 'ino'} or
                     any(type(item) is not int or item < 0 for item in value[key].values())):
@@ -847,7 +856,7 @@ class Restorer:
             with PathGuard(for_write=True) as guard:
                 parent = guard.directory(self.app.parent)
                 os.mkdir(self.stage.name, 0o700, dir_fd=parent)
-            journal = {'schema': 1, 'app_path': str(self.app),
+            journal = {'schema': 1, 'app_path': str(self.app), 'previous_id': uuid.uuid4().hex,
                        'original_tree': self.record['original_tree'], 'patched_tree': self.record['patched_tree'],
                        'stage_identity': identity(self.stage), 'previous_identity': identity(self.app)}
             atomic_json(self.journal, journal)
