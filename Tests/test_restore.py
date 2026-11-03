@@ -100,16 +100,12 @@ class RestoreTests(unittest.TestCase):
     def test_two_unregistered_versions_restore_and_preserve_previous(self):
         for version, build in [('100.20', '7001'), ('2.444', '89')]:
             with self.subTest(version=version):
-                # 각 앱 경로는 동일하므로 이전 시험의 보존 파일만 시험 소유자로 정리합니다.
-                tool = self.tool()
-                if tool.previous.exists():
-                    shutil.rmtree(tool.previous)
                 self.make_backup(version, build)
                 self.assertEqual(self.tool().status()['state'], 'RESTORABLE')
                 result = self.tool().restore()
                 self.assertEqual(result['state'], 'RESTORED')
                 self.assertEqual(m.tree_manifest(self.app), self.record['original_tree'])
-                self.assertEqual(m.tree_manifest(self.tool().previous), self.record['patched_tree'])
+                self.assertEqual(m.tree_manifest(Path(result['previous_app'])), self.record['patched_tree'])
                 self.assertEqual(m.load_json(self.backup / 'manifest.json')['state'], 'ORIGINAL')
                 self.assertEqual(self.tool().restore()['state'], 'ORIGINAL')
                 self.assertTrue((self.backup / 'original.app').is_dir())
@@ -390,6 +386,51 @@ class RestoreTests(unittest.TestCase):
             self.backup.chmod(0o755)
             with self.assertRaises(m.RestoreError):
                 m.Restorer(self.app).status()
+
+    def test_repeated_restore_preserves_all_previous_apps(self):
+        first = self.tool().restore()
+        saved = Path(first['previous_app'])
+        original_saved = m.tree_manifest(saved)
+        # 재패치한 앱과 이전 성공 기록이 공존하는 상황입니다.
+        shutil.rmtree(self.app)
+        shutil.copytree(saved, self.app, symlinks=True)
+        second = self.tool().restore()
+        self.assertNotEqual(first['previous_app'], second['previous_app'])
+        self.assertEqual(m.tree_manifest(saved), original_saved)
+        self.assertEqual(m.tree_manifest(Path(second['previous_app'])), original_saved)
+
+    def test_legacy_previous_is_left_untouched(self):
+        previous = self.tool().previous_base
+        previous.mkdir()
+        (previous / 'keep').write_text('이전 보존 파일')
+        before = m.tree_manifest(previous)
+        self.assertEqual(self.tool().status()['state'], 'RESTORABLE')
+        self.assertEqual(self.tool().restore()['state'], 'RESTORED')
+        self.assertEqual(m.tree_manifest(previous), before)
+
+    def test_legacy_journal_still_uses_fixed_previous_path(self):
+        tool = self.tool()
+        with patch.object(tool, '_resume', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                tool.restore()
+        path = self.backup / 'restore-only-transaction.json'
+        journal = m.load_json(path)
+        journal.pop('previous_id')
+        m.atomic_json(path, journal)
+        result = self.tool().restore()
+        self.assertEqual(result['previous_app'], str(tool.previous_base))
+        self.assertEqual(m.tree_manifest(tool.previous_base), self.record['patched_tree'])
+
+    def test_previous_path_injection_is_rejected(self):
+        tool = self.tool()
+        with patch.object(tool, '_resume', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                tool.restore()
+        path = self.backup / 'restore-only-transaction.json'
+        journal = m.load_json(path)
+        journal['previous_id'] = '../outside'
+        m.atomic_json(path, journal)
+        self.assert_code('INVALID_JOURNAL', self.tool().restore)
 
     def test_sudo_backup_home_and_multiple_backups(self):
         fakehome = self.root / 'other-home'
