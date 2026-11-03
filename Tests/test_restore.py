@@ -336,6 +336,49 @@ class RestoreTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertFalse(self.tool().lock.exists())
 
+    def test_diagnostic_is_read_only_and_omits_private_paths(self):
+        before = m.tree_manifest(self.root)
+        result = m.diagnose(self.app, self.backup)
+        text = json.dumps(result)
+        self.assertEqual(result['status']['state'], 'RESTORABLE')
+        self.assertEqual(result['record']['tool_version'], None)
+        self.assertNotIn(str(self.root), text)
+        self.assertNotIn(str(self.app), text)
+        self.assertEqual(m.tree_manifest(self.root), before)
+
+    def test_diagnostic_error_hides_external_command_and_paths(self):
+        secret = 'secret-user-token-PRIVATE'
+        with patch.object(m.Restorer, 'status', side_effect=m.RestoreError('/Users/' + secret, 'ARTIFACT_CHANGED')):
+            result = m.diagnose(self.app, self.backup)
+        self.assertEqual(result['status'], {'state': 'ERROR', 'code': 'ARTIFACT_CHANGED'})
+        self.assertNotIn(secret, json.dumps(result))
+
+    def test_diagnostic_filters_record_and_app_strings(self):
+        secret = 'private-user-and-credential'
+        self.record['tool_version'] = secret
+        self.record['state'] = secret
+        m.atomic_json(self.backup / 'manifest.json', self.record)
+        info = plistlib.loads((self.app / m.INFO).read_bytes())
+        info['CFBundleShortVersionString'] = secret
+        (self.app / m.INFO).write_bytes(plistlib.dumps(info))
+        result = m.diagnose(self.app, self.backup)
+        self.assertIsNone(result['app']['version'])
+        self.assertEqual(result['record']['state'], 'other')
+        self.assertNotIn(secret, json.dumps(result))
+
+    def test_diagnostic_reports_missing_backup_and_permissions(self):
+        with patch.object(m.Restorer, 'status', side_effect=PermissionError(13, 'private-path')):
+            result = m.diagnose(self.app, self.root / 'missing-backup')
+        self.assertEqual(result['status'], {'state': 'ERROR', 'code': 'IO_ERROR', 'errno': 13})
+        self.assertFalse(result['backup']['original.app']['exists'])
+        self.assertNotIn('private-path', json.dumps(result))
+
+    def test_diagnostic_unexpected_error_has_no_traceback_or_secret(self):
+        with patch.object(m.Restorer, 'status', side_effect=RuntimeError('/Users/private-secret')):
+            result = m.diagnose(self.app, self.backup)
+        self.assertEqual(result['status']['code'], 'UNEXPECTED_DIAGNOSTIC_ERROR')
+        self.assertNotIn('private-secret', json.dumps(result))
+
     def test_sudo_backup_home_and_multiple_backups(self):
         fakehome = self.root / 'other-home'
         expected = fakehome / 'Library/Application Support/NoAdKakaoMac/backups'

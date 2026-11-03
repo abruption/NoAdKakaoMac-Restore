@@ -1,0 +1,86 @@
+name: 복구 오류 제보
+description: 공식 원본 복구에 실패하거나 예상과 다르게 동작한 경우 알려 주세요.
+title: 'fix(restore): '
+assignees: [abruption]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        복구가 중단되면 앱과 백업, 중단 기록을 그대로 보존해 주세요.
+        앱·백업 파일, 민감한 원시 로그, 로그인 정보와 대화 내용은 올리지 마세요.
+
+        [사용법의 진단 안내](https://github.com/abruption/NoAdKakaoMac-Restore/blob/main/docs/사용법.md)를 따라 `diagnose.sh`를 내려받고 `sh diagnose.sh`를 실행해 주세요.
+        다른 앱이나 백업 경로를 사용한다면 `--app`과 `--backup-dir`을 지정할 수 있습니다.
+        진단 결과에는 경로·로그인·대화·토큰·기기 식별자 없이 요약만 포함됩니다.
+        진단 실행에 실패해도 기존 오류 코드만으로 제보할 수 있습니다.
+  - type: textarea
+    id: problem
+    attributes:
+      label: 복구가 실패한 상황
+      description: 어떤 명령을 실행하던 중 어떤 문제가 발생했나요? 경로에 포함된 사용자 이름은 가려 주세요.
+      placeholder: 상태 확인은 되었지만 복원 단계에서 중단되었습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 절차
+      description: 문제가 발생하기까지 수행한 순서를 적어 주세요.
+      placeholder: |
+        1. 카카오톡 종료
+        2. sh restore.sh status 실행
+        3. sh restore.sh restore 실행
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대한 결과
+      description: 어떤 결과를 예상했나요?
+    validations:
+      required: true
+  - type: input
+    id: error_code
+    attributes:
+      label: 오류 코드
+      description: 출력의 code 값을 적어 주세요. 코드가 없으면 '없음', 확인할 수 없으면 '모름'으로 적어 주세요.
+      placeholder: APP_MISMATCH
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 진단 결과
+      description: sh diagnose.sh의 JSON 결과를 붙여 넣어 주세요. 실행할 수 없다면 비워 두어도 됩니다. 민감한 원시 로그는 붙이지 마세요.
+      render: json
+    validations:
+      required: false
+  - type: dropdown
+    id: execution_privilege
+    attributes:
+      label: 복원 명령 실행 권한
+      options:
+        - 일반 사용자
+        - sudo 사용
+        - 모름
+    validations:
+      required: true
+  - type: dropdown
+    id: backup_release
+    attributes:
+      label: 원본 백업을 만든 NoAdKakaoMac 버전
+      description: 복원 도구 버전이 아니라 원본 백업을 생성한 버전입니다.
+      options:
+        - RC1
+        - RC2
+        - RC3
+        - 모름
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 개인정보 제외 확인
+      options:
+        - label: 앱·백업 파일과 민감한 원시 로그를 첨부하지 않았으며, 경로의 사용자 이름·로그인 정보·대화 내용·토큰·기기 식별자를 제외했습니다.
+          required: true
